@@ -15,7 +15,7 @@ To run the Python script locally and generate the map:
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/near-field-cosmology-map.git
+   git clone https://github.com/Maahaathir/near-field-cosmology-map.git
    ```
 2. Install the required libraries:
    ```bash
