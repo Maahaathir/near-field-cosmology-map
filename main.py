@@ -1,4 +1,5 @@
 import os
+import json
 import webbrowser
 import numpy as np
 import pandas as pd
@@ -232,17 +233,18 @@ def build_3d_map(df: pd.DataFrame, refs_df: pd.DataFrame) -> go.Figure:
         scene=dict(
             dragmode='turntable',
             xaxis_title='Z (Mpc)', yaxis_title='Y (Mpc)', zaxis_title='X (Mpc)',
-            xaxis=dict(gridcolor='#333', backgroundcolor='black'),
-            yaxis=dict(gridcolor='#333', backgroundcolor='black'),
-            zaxis=dict(gridcolor='#333', backgroundcolor='black'),
+            xaxis=dict(range=[-15, 15], gridcolor='#333', backgroundcolor='black'),
+            yaxis=dict(range=[-15, 15], gridcolor='#333', backgroundcolor='black'),
+            zaxis=dict(range=[-15, 15], gridcolor='#333', backgroundcolor='black'),
             aspectmode='data'
+            
         ),
         margin=dict(l=0, r=0, b=0, t=0) 
     )
     return fig
 
 # ==========================================
-# MAIN EXECUTION
+# MAIN EXECUTION WITH UI WRAPPER
 # ==========================================
 if __name__ == "__main__":
     # 1. Process the datasets
@@ -250,10 +252,167 @@ if __name__ == "__main__":
     
     # 2. Build the visual model
     figure = build_3d_map(df_main, refs_main)
-    
-    # 3. Export for GitHub Pages and launch locally
+
+    # 3. Create a JSON Dictionary of Galaxy Coordinates for the Search function
+    search_dict = {}
+    for idx, row in df_main.iterrows():
+        # Plotly mapping logic used in the script maps: xaxis=Z, yaxis=Y, zaxis=X
+        search_dict[row['name']] = {
+            'h': {'x': row['Z_h'], 'y': row['Y_h'], 'z': row['X_h']},
+            'lg': {'x': row['Z_lg'], 'y': row['Y_lg'], 'z': row['X_lg']}
+        }
+    for idx, row in refs_main.iterrows():
+        search_dict[row['name']] = {
+            'h': {'x': row['Z_h'], 'y': row['Y_h'], 'z': row['X_h']},
+            'lg': {'x': row['Z_lg'], 'y': row['Y_lg'], 'z': row['X_lg']}
+        }
+    search_json = json.dumps(search_dict)
+
+    # 4. Extract the Plotly HTML snippet
+    plotly_html = figure.to_html(full_html=False, include_plotlyjs='cdn', div_id='plotly-graph')
+
+    # 5. Build Custom HTML Wrapper with Search UI overlay (Using safe placeholders)
+    html_template = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>Near-Field Cosmology</title>
+        <style>
+            body { margin: 0; padding: 0; background-color: black; color: white; font-family: Arial, sans-serif; overflow: hidden; width: 100vw; height: 100vh; }
+            
+            /* FORCE PLOTLY FULL SCREEN */
+            #plotly-graph { width: 100vw !important; height: 100vh !important; }
+            
+            #search-container {
+                position: absolute;
+                top: 50px;  /* Drops it right below the Plotly buttons */
+                left: 10px; /* Aligns it to the left edge */
+                z-index: 1000;
+                background: rgba(30, 30, 30, 0.85);
+                padding: 10px;
+                border-radius: 8px;
+                border: 1px solid #444;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.5);
+                display: flex; 
+                align-items: center;
+            }
+            #searchBox { padding: 6px; width: 200px; background: #222; color: white; border: 1px solid #777; border-radius: 4px; }
+            #viewBtn, #resetBtn { padding: 6px 12px; border: none; cursor: pointer; font-weight: bold; border-radius: 4px; margin-left: 5px; transition: 0.2s;}
+            #viewBtn { background: #00ffff; color: black; }
+            #viewBtn:hover { background: #00cccc; }
+            #resetBtn { background: #444; color: white; }
+            #resetBtn:hover { background: #666; }
+        </style>
+    </head>
+    <body>
+        <div id="search-container">
+            <input type="text" id="searchBox" list="galaxy-list" placeholder="Search for a galaxy...">
+            <datalist id="galaxy-list"></datalist>
+            <button id="viewBtn">View</button>
+            <button id="resetBtn">Reset View</button>
+        </div>
+        
+        @@PLOTLY_GRAPH_HERE@@
+
+        <script>
+            const searchData = @@SEARCH_DATA_HERE@@;
+            
+            const datalist = document.getElementById('galaxy-list');
+            for (let name in searchData) {
+                let option = document.createElement('option');
+                option.value = name;
+                datalist.appendChild(option);
+            }
+
+            let highlightTraceIndex = -1;
+
+            document.getElementById('viewBtn').addEventListener('click', function() {
+                const name = document.getElementById('searchBox').value;
+                if (!searchData[name]) {
+                    alert("Galaxy not found! Please check the spelling or select from the dropdown.");
+                    return;
+                }
+
+                const graph = document.getElementById('plotly-graph');
+                const isLG = graph.layout.title.text.includes('LG Barycenter');
+                const frame = isLG ? 'lg' : 'h';
+                const coords = searchData[name][frame];
+
+                // 1. Calculate the normalization factor for the camera
+                const x_range = (graph.layout.scene && graph.layout.scene.xaxis && graph.layout.scene.xaxis.range) ? graph.layout.scene.xaxis.range : [-15, 15];
+                const r_max = (x_range[1] - x_range[0]) / 2.0;
+                
+                const cx = coords.x / r_max;
+                const cy = coords.y / r_max;
+                const cz = coords.z / r_max;
+
+                // 2. Point camera center AT the galaxy, and put the 'eye' close to it
+                const zoomOffset = 0.08; 
+                const update = {
+                    'scene.camera.center': { x: cx, y: cy, z: cz },
+                    'scene.camera.eye': { x: cx + zoomOffset, y: cy + zoomOffset, z: cz + zoomOffset }
+                };
+                Plotly.relayout('plotly-graph', update);
+
+                // 3. Highlight Target
+                const trace = {
+                    x: [coords.x], y: [coords.y], z: [coords.z],
+                    mode: 'markers+text',
+                    text: ['🎯 ' + name],
+                    textposition: 'top center',
+                    textfont: {color: '#00ffff', size: 15, weight: 'bold'},
+                    marker: {size: 15, color: 'rgba(0,0,0,0)', line: {color: '#00ffff', width: 3}},
+                    name: 'Highlight',
+                    showlegend: false,
+                    hoverinfo: 'skip'
+                };
+
+                if (highlightTraceIndex !== -1) {
+                    Plotly.deleteTraces('plotly-graph', highlightTraceIndex).then(() => {
+                        Plotly.addTraces('plotly-graph', trace).then(() => {
+                            highlightTraceIndex = graph.data.length - 1;
+                        });
+                    });
+                } else {
+                    Plotly.addTraces('plotly-graph', trace).then(() => {
+                        highlightTraceIndex = graph.data.length - 1;
+                    });
+                }
+            });
+
+            document.getElementById('resetBtn').addEventListener('click', function() {
+                document.getElementById('searchBox').value = '';
+                if (highlightTraceIndex !== -1) {
+                    Plotly.deleteTraces('plotly-graph', highlightTraceIndex);
+                    highlightTraceIndex = -1;
+                }
+                
+                // Reset the camera back to the default origin view
+                Plotly.relayout('plotly-graph', {
+                    'scene.camera.center': {x: 0, y: 0, z: 0},
+                    'scene.camera.eye': {x: 1.25, y: 1.25, z: 1.25}
+                });
+            });
+        </script>
+    </body>
+    </html>
+    """
+
+    # 6. Stream output directly to file to prevent MemoryError
     print(f"Exporting application to {OUTPUT_HTML}...")
-    figure.write_html(OUTPUT_HTML)
+    
+    # Split using our new safe tokens
+    part1, rest = html_template.split('@@PLOTLY_GRAPH_HERE@@')
+    part2, part3 = rest.split('@@SEARCH_DATA_HERE@@')
+
+    # Write sequentially to the hard drive
+    with open(OUTPUT_HTML, 'w', encoding='utf-8') as f:
+        f.write(part1)
+        f.write(plotly_html)
+        f.write(part2)
+        f.write(search_json)
+        f.write(part3)
     
     # Launch automatically in default browser
     filepath = os.path.realpath(OUTPUT_HTML)
