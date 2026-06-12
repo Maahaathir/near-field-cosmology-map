@@ -193,7 +193,7 @@ def build_3d_map(df: pd.DataFrame, refs_df: pd.DataFrame) -> go.Figure:
     steps = [dict(
         method="relayout", label=f"{d} Mpc",
         args=[{"scene.xaxis.range": [-d, d], "scene.yaxis.range": [-d, d], "scene.zaxis.range": [-d, d]}]
-    ) for d in [3, 5, 10, 15]]
+    ) for d in [3, 5, 10, 15, 20]]
 
     sliders = [dict(
         active=3, currentvalue={"prefix": "Radius: ", "font": {"color": "white"}},
